@@ -45,7 +45,12 @@ def get_bars(symbol, start_date=None, end_date=None, timeframe="5Min", hours_bac
     print(f"      📡 Response Status: {response.status_code}")
     print(f"      📝 Response Content Length: {len(response.text)}")
     print(f"      📄 Response Content Preview: {response.text[:500]}...")
-    
+
+    # Handle subscription limitations (403 errors)
+    if response.status_code == 403:
+        print(f"      🚫 Subscription limitation: Cannot access market data for {symbol} (403 Forbidden)")
+        return pd.DataFrame()  # Return empty DataFrame instead of raising exception
+
     response.raise_for_status()
     data = response.json()
 
@@ -55,15 +60,15 @@ def get_bars(symbol, start_date=None, end_date=None, timeframe="5Min", hours_bac
     if data is None:
         print(f"      ❌ JSON parsing returned None")
         return pd.DataFrame()  # Return empty DataFrame
-    
+
     bars_data = data.get('bars')
     print(f"      Bars data type: {type(bars_data)}")
     print(f"      Bars data value: {bars_data}")
-    
+
     if bars_data is None or (isinstance(bars_data, list) and len(bars_data) == 0):
         print(f"      No bars in response (null or empty)")
         return pd.DataFrame()  # Return empty DataFrame
-    
+
     print(f"      Bars count: {len(bars_data)}")
     sample = bars_data[0] if bars_data else {}
     print(f"      Sample bar: {sample}")

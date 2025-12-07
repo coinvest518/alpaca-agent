@@ -720,12 +720,18 @@ class TradingDashboard {
 
             if (symbolData) {
                 // Update current price
-                document.getElementById('current-price').textContent =
-                    `$${symbolData.price.toFixed(2)}`;
+                let priceText = `$${symbolData.price.toFixed(2)}`;
+                if (symbolData.subscription_limited) {
+                    priceText += ' <i class="fas fa-exclamation-triangle text-warning" title="Limited data - upgrade subscription for real-time prices"></i>';
+                }
+                document.getElementById('current-price').innerHTML = priceText;
 
                 // Update volume
-                document.getElementById('volume').textContent =
-                    symbolData.volume ? symbolData.volume.toLocaleString() : '--';
+                let volumeText = symbolData.volume ? symbolData.volume.toLocaleString() : '--';
+                if (symbolData.subscription_limited) {
+                    volumeText += ' <small class="text-muted">(delayed)</small>';
+                }
+                document.getElementById('volume').innerHTML = volumeText;
 
                 // Calculate real 24h change from historical data
                 this.calculate24hChange(symbol);
