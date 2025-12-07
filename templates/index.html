@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 AI Trading Bot Dashboard</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Chart.js for charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chart.js Date Adapter -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-robot me-2"></i>
+                AI Trading Bot
+                <span class="badge bg-primary ms-2">v2.0</span>
+            </a>
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <small class="text-light opacity-75">Last Update:</small>
+                    <div id="last-update" class="text-info small">--:--:--</div>
+                </div>
+                <span id="status-indicator" class="badge bg-danger me-3">
+                    <i class="fas fa-circle"></i> STOPPED
+                </span>
+                <div class="btn-group" role="group">
+                    <button id="start-btn" class="btn btn-success btn-sm">
+                        <i class="fas fa-play"></i> Start Trading
+                    </button>
+                    <button id="stop-btn" class="btn btn-danger btn-sm" disabled>
+                        <i class="fas fa-stop"></i> Stop Trading
+                    </button>
+                    <button id="cycle-btn" class="btn btn-warning btn-sm">
+                        <i class="fas fa-sync"></i> Run Cycle
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Top Stats Row -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-success" id="total-pnl">$0.00</div>
+                        <small class="text-muted">Total P&L</small>
+                        <div class="mt-2">
+                            <span class="badge bg-success" id="pnl-change">+0.00%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-info" id="active-positions">0</div>
+                        <small class="text-muted">Active Positions</small>
+                        <div class="mt-2">
+                            <i class="fas fa-chart-line fa-2x text-info opacity-50"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-warning" id="win-rate">0.0%</div>
+                        <small class="text-muted">Win Rate</small>
+                        <div class="mt-2">
+                            <i class="fas fa-trophy fa-2x text-warning opacity-50"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="stat-value text-primary" id="total-trades">0</div>
+                        <small class="text-muted">Total Trades</small>
+                        <div class="mt-2">
+                            <i class="fas fa-exchange-alt fa-2x text-primary opacity-50"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Left Sidebar - Portfolio & Controls -->
+            <div class="col-lg-4 col-xl-3">
+                <!-- Portfolio Overview -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-wallet me-2"></i>Portfolio Overview
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="portfolio-data">
+                            <div class="text-center">
+                                <div class="spinner-border text-primary mb-3" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="text-muted">Loading portfolio data...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trading Controls -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-cogs me-2"></i>Trading Controls
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold">Trading Mode</label>
+                            <select class="form-select" id="trading-mode">
+                                <option value="conservative">🛡️ Conservative</option>
+                                <option value="balanced" selected>⚖️ Balanced</option>
+                                <option value="aggressive">🚀 Aggressive</option>
+                            </select>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold">Risk Level</label>
+                            <input type="range" class="form-range" id="risk-level" min="1" max="10" value="5" step="1">
+                            <div class="d-flex justify-content-between text-muted small">
+                                <span>Low</span>
+                                <span id="risk-value" class="fw-semibold">5</span>
+                                <span>High</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Auto-Trading Interval</label>
+                            <select class="form-select" id="trading-interval">
+                                <option value="300" selected>5 minutes</option>
+                                <option value="600">10 minutes</option>
+                                <option value="1800">30 minutes</option>
+                                <option value="3600">1 hour</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-outline-primary w-100" id="update-settings">
+                            <i class="fas fa-save me-2"></i>Update Settings
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-history me-2"></i>Recent Activity
+                        </h5>
+                    </div>
+                    <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+                        <div id="recent-activity">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-clock fa-2x mb-3 opacity-50"></i>
+                                <p>No recent activity</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-lg-8 col-xl-9">
+                <!-- Market Data Chart -->
+                <div class="card mb-4">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-chart-area me-2"></i>Live Market Data
+                        </h5>
+                        <div class="d-flex align-items-center">
+                            <div class="me-3">
+                                <small class="text-muted">Symbol:</small>
+                                <select class="form-select form-select-sm d-inline-block w-auto ms-2" id="chart-symbol">
+                                    <option value="SPY">SPY</option>
+                                    <option value="AAPL">AAPL</option>
+                                    <option value="GOOGL">GOOGL</option>
+                                    <option value="MSFT">MSFT</option>
+                                    <option value="TSLA">TSLA</option>
+                                </select>
+                            </div>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button class="btn btn-outline-light active" data-timeframe="1H">1H</button>
+                                <button class="btn btn-outline-light" data-timeframe="4H">4H</button>
+                                <button class="btn btn-outline-light" data-timeframe="1D">1D</button>
+                                <button class="btn btn-outline-light" data-timeframe="1W">1W</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-1" id="current-price">$--.--</div>
+                                    <small class="text-muted">Current Price</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-1" id="price-change">+--.-- (--.--%)</div>
+                                    <small class="text-muted">24h Change</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-1" id="volume">--</div>
+                                    <small class="text-muted">Volume</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-1" id="market-status">
+                                        <span class="badge bg-success">OPEN</span>
+                                    </div>
+                                    <small class="text-muted">Market Status</small>
+                                </div>
+                            </div>
+                        </div>
+                        <canvas id="market-chart" height="350"></canvas>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <!-- AI Decisions & Analysis -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="fas fa-brain me-2"></i>AI Trading Decisions
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="trading-decisions">
+                                    <div class="text-center text-muted">
+                                        <i class="fas fa-robot fa-3x mb-3 opacity-50"></i>
+                                        <h6>AI Analysis in Progress</h6>
+                                        <p class="small">Waiting for market data and analysis...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Technical Analysis -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="fas fa-chart-bar me-2"></i>Technical Indicators
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row" id="technical-indicators">
+                                    <div class="col-md-6 mb-3">
+                                        <div class="indicator-card">
+                                            <div class="indicator-label">RSI</div>
+                                            <div class="indicator-value" id="rsi-value">--</div>
+                                            <div class="indicator-status" id="rsi-status">Loading...</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <div class="indicator-card">
+                                            <div class="indicator-label">MACD</div>
+                                            <div class="indicator-value" id="macd-value">--</div>
+                                            <div class="indicator-status" id="macd-status">Loading...</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <div class="indicator-card">
+                                            <div class="indicator-label">EMA (20)</div>
+                                            <div class="indicator-value" id="ema-value">--</div>
+                                            <div class="indicator-status" id="ema-status">Loading...</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <div class="indicator-card">
+                                            <div class="indicator-label">Volatility</div>
+                                            <div class="indicator-value" id="volatility-value">--</div>
+                                            <div class="indicator-status" id="volatility-status">Loading...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- News Feed & Activity -->
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="fas fa-newspaper me-2"></i>Market Intelligence
+                                </h5>
+                            </div>
+                            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                                <div id="news-feed">
+                                    <div class="text-center text-muted">
+                                        <i class="fas fa-search fa-2x mb-3 opacity-50"></i>
+                                        <p>Scanning for market news...</p>
+                                        <small class="text-muted">Real-time news and analysis</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Performance Chart -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="fas fa-chart-line me-2"></i>Performance Overview
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="performance-chart" height="250"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container position-fixed top-0 end-0 p-3">
+        <div id="notification-toast" class="toast" role="alert">
+            <div class="toast-header">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong class="me-auto" id="toast-title">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="toast-message">
+                Message content
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

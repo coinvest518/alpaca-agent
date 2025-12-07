@@ -1,0 +1,14 @@
+python-dotenv==1.0.0
+pandas==2.2.2
+numpy==1.26.4
+requests==2.32.3
+flask==3.0.0
+langchain
+langchain-google-genai
+langchain-community
+langchain-hyperbrowser
+google-generativeai
+langgraph
+langsmith
+composio-langchain
+astrapy
