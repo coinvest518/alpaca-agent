@@ -8,14 +8,10 @@ load_dotenv()
 
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
-ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 
-# Alpaca URLs (for trading operations)
+# Alpaca URLs (for trading operations and market data)
 BASE_URL = "https://api.alpaca.markets"
 DATA_BASE_URL = "https://data.alpaca.markets"
-
-# Alpha Vantage URLs (for free market data)
-ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
@@ -35,97 +31,96 @@ def get_positions():
     return response.json()
 
 def get_bars(symbol, start_date=None, end_date=None, timeframe="5Min", hours_back=2):
-    """Fetch historical bars for a symbol using Alpha Vantage (free API)."""
-    print(f"🔍 Fetching bars for {symbol} using Alpha Vantage...")
+    """Fetch historical bars for a symbol using Alpaca free tier (real market data) with database fallback."""
+    print(f"🔍 Fetching bars for {symbol} using Alpaca free tier...")
 
-    # Check if Alpha Vantage API key is available
-    if not ALPHA_VANTAGE_API_KEY or ALPHA_VANTAGE_API_KEY == "your_alpha_vantage_key_here":
-        print(f"❌ Alpha Vantage API key not configured. Please set ALPHA_VANTAGE_API_KEY in .env")
-        return pd.DataFrame()  # Return empty DataFrame
+    # Try Alpaca first for real-time data
+    alpaca_data = _get_bars_from_alpaca(symbol, start_date, end_date, timeframe, hours_back)
 
-    # For free tier, we can only get daily data
-    # Map timeframe to what we can provide with free tier
-    is_intraday_request = timeframe in ["1Min", "5Min", "15Min", "30Min", "60Min", "1H"]
-    if is_intraday_request:
-        print(f"⚠️ Alpha Vantage free tier only supports daily data. Converting {timeframe} to daily.")
-        actual_timeframe = "1D"
-    else:
-        actual_timeframe = timeframe
+    if alpaca_data is not None and not alpaca_data.empty:
+        print(f"✅ Using fresh Alpaca data for {symbol}")
+        # Save to database for future use
+        _save_bars_to_database(symbol, alpaca_data)
+        return alpaca_data
 
-    # Alpha Vantage free tier parameters - only daily data available
+    # Fallback to database if Alpaca fails
+    print(f"⚠️ Alpaca data unavailable for {symbol}, checking database...")
+    db_data = _get_bars_from_database(symbol, start_date, end_date, timeframe, hours_back)
+
+    if db_data is not None and not db_data.empty:
+        print(f"✅ Using saved database data for {symbol}")
+        return db_data
+
+    print(f"❌ No data available for {symbol} from Alpaca or database")
+    return pd.DataFrame()
+
+
+def _get_bars_from_alpaca(symbol, start_date=None, end_date=None, timeframe="5Min", hours_back=2):
+    """Fetch bars directly from Alpaca API."""
+    # Use Alpaca's free tier with IEX feed (real market data)
+    if start_date is None:
+        # Default to last N hours
+        start_date = (datetime.now() - timedelta(hours=hours_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Use IEX feed for free tier (real-time data available)
     params = {
-        "function": "TIME_SERIES_DAILY",
-        "symbol": symbol,
-        "apikey": ALPHA_VANTAGE_API_KEY,
-        "outputsize": "compact"  # Last 100 data points
+        "start": start_date,
+        "end": end_date,
+        "timeframe": timeframe,
+        "feed": "iex"  # Free tier: IEX exchange (real market data)
     }
 
-    print(f"      📡 API Call: {ALPHA_VANTAGE_BASE_URL} with params: {params}")
-
     try:
-        response = requests.get(ALPHA_VANTAGE_BASE_URL, params=params)
+        response = requests.get(f"{DATA_BASE_URL}/v2/stocks/{symbol}/bars", headers=HEADERS, params=params)
+        print(f"      📡 API Call: {response.url}")
+        print(f"      📊 Response Status: {response.status_code}")
+
+        if response.status_code == 403:
+            print(f"      🚫 Subscription limitation detected for {symbol}")
+            print(f"      💡 Alpaca free tier provides IEX data only (2.5% of market volume)")
+            print(f"      🔄 Falling back to available data...")
+            # Try without feed parameter to get whatever is available
+            params.pop("feed", None)
+            response = requests.get(f"{DATA_BASE_URL}/v2/stocks/{symbol}/bars", headers=HEADERS, params=params)
+            print(f"      📡 Fallback API Call: {response.url}")
+            print(f"      📊 Fallback Response Status: {response.status_code}")
+
         response.raise_for_status()
-
         data = response.json()
-        print(f"      📊 Response status: {response.status_code}")
 
-        # Check for API errors
-        if "Error Message" in data:
-            print(f"      ❌ Alpha Vantage API Error: {data['Error Message']}")
-            return pd.DataFrame()
+        # Debug: print response structure
+        print(f"      📝 Response keys: {list(data.keys()) if data else 'None'}")
 
-        if "Note" in data:
-            print(f"      ⚠️ Alpha Vantage Note: {data['Note']}")
-            return pd.DataFrame()
+        bars_data = data.get('bars')
+        if bars_data is None or (isinstance(bars_data, list) and len(bars_data) == 0):
+            print(f"      ⚠️ No bars data available for {symbol}")
+            return pd.DataFrame()  # Return empty DataFrame
 
-        if "Information" in data:
-            print(f"      ⚠️ Alpha Vantage Information: {data['Information']}")
-            print(f"      💡 Alpha Vantage free tier limitations - switching to alternative approach")
-            return pd.DataFrame()
-
-        # Extract time series data
-        time_series_key = None
-        for key in data.keys():
-            if "Time Series" in key:
-                time_series_key = key
-                break
-
-        if not time_series_key:
-            print(f"      ❌ No time series data found in response")
-            return pd.DataFrame()
-
-        time_series = data[time_series_key]
-        print(f"      📈 Found {len(time_series)} data points")
+        print(f"      📈 Found {len(bars_data)} real market data bars")
 
         # Convert to DataFrame
-        bars_data = []
-        for timestamp, values in time_series.items():
-            bar = {
-                'timestamp': timestamp,
-                'open': float(values['1. open']),
-                'high': float(values['2. high']),
-                'low': float(values['3. low']),
-                'close': float(values['4. close']),
-                'volume': int(float(values['5. volume']))
-            }
-            bars_data.append(bar)
-
         df = pd.DataFrame(bars_data)
 
-        # Convert timestamp to datetime and set as index
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df.set_index('timestamp', inplace=True)
-
-        # Sort by timestamp (Alpha Vantage returns newest first)
-        df = df.sort_index()
+        # Alpaca uses 't' for timestamp
+        if 't' in df.columns:
+            df['t'] = pd.to_datetime(df['t'])
+            df.set_index('t', inplace=True)
+            print(f"      ✅ Using timestamp column 't'")
+        else:
+            print(f"      ⚠️ No timestamp column found")
+            # Create synthetic timestamps if needed
+            df.index = pd.date_range(start=datetime.now() - timedelta(hours=hours_back),
+                                    periods=len(df), freq='5min')
 
         # Rename columns to match what indicators expect (Alpaca format)
         df = df.rename(columns={
-            'open': 'o',
-            'high': 'h',
-            'low': 'l',
-            'close': 'c',
-            'volume': 'v'
+            'o': 'o',  # open
+            'h': 'h',  # high
+            'l': 'l',  # low
+            'c': 'c',  # close
+            'v': 'v'   # volume
         })
 
         # Filter by date range if specified
@@ -137,13 +132,6 @@ def get_bars(symbol, start_date=None, end_date=None, timeframe="5Min", hours_bac
             end_dt = pd.to_datetime(end_date)
             df = df[df.index <= end_dt]
 
-        # For intraday requests, create synthetic data from daily data
-        if is_intraday_request and hours_back:
-            # Since we only have daily data, we'll create synthetic intraday data
-            # by repeating the daily values (not ideal but better than no data)
-            print(f"      🔄 Creating synthetic {timeframe} data from daily data")
-            df = _create_synthetic_intraday_data(df, timeframe, hours_back)
-
         print(f"      ✅ Final DataFrame shape: {df.shape}")
         print(f"      📊 Final columns: {list(df.columns)}")
         if not df.empty:
@@ -152,99 +140,52 @@ def get_bars(symbol, start_date=None, end_date=None, timeframe="5Min", hours_bac
         return df
 
     except requests.exceptions.RequestException as e:
-        print(f"      ❌ Network error fetching data from Alpha Vantage: {str(e)}")
+        print(f"      ❌ Network error fetching data from Alpaca: {str(e)}")
         return pd.DataFrame()
     except Exception as e:
-        print(f"      ❌ Error processing Alpha Vantage data: {str(e)}")
+        print(f"      ❌ Error processing Alpaca data: {str(e)}")
         return pd.DataFrame()
 
 
-def _create_synthetic_intraday_data(daily_df, timeframe, hours_back):
-    """Create synthetic intraday data from daily data with realistic price movements."""
-    if daily_df.empty:
-        return daily_df
+def _save_bars_to_database(symbol, data):
+    """Save market data to database for future use."""
+    try:
+        from .storage_agent import trading_storage
+        trading_storage.save_market_data(symbol, data)
+        print(f"      💾 Saved {len(data)} bars for {symbol} to database")
+    except Exception as e:
+        print(f"      ⚠️ Failed to save data to database: {e}")
 
-    import numpy as np
 
-    # Get the most recent daily data
-    latest_day = daily_df.iloc[-1]
+def _get_bars_from_database(symbol, start_date=None, end_date=None, timeframe="5Min", hours_back=2):
+    """Retrieve market data from database as fallback."""
+    try:
+        from .storage_agent import trading_storage
 
-    # Create intraday bars for the last few hours
-    intraday_data = []
-    base_time = datetime.now().replace(hour=9, minute=30, second=0, microsecond=0)  # Market open
-
-    # Determine interval in minutes
-    interval_minutes = {
-        "1Min": 1,
-        "5Min": 5,
-        "15Min": 15,
-        "30Min": 30,
-        "60Min": 60,
-        "1H": 60
-    }.get(timeframe, 5)
-
-    # Create bars for the last N hours
-    total_minutes = hours_back * 60
-    num_bars = total_minutes // interval_minutes
-
-    # Calculate realistic price movements with MORE variation for trading charts
-    daily_open = latest_day['o']
-    daily_high = latest_day['h']
-    daily_low = latest_day['l']
-    daily_close = latest_day['c']
-
-    # Create a trending price path with SIGNIFICANT variation
-    trend_direction = 1 if daily_close > daily_open else -1
-    trend_strength = abs(daily_close - daily_open) / daily_open * 2.0  # 200% of daily move for more action
-
-    # Generate price path with MUCH more randomness for realistic trading
-    np.random.seed(42)  # For reproducible results
-
-    # Start from daily open with some initial variation
-    current_price = daily_open + np.random.normal(0, (daily_high - daily_low) * 0.3)  # Much more initial variation
-
-    for i in range(num_bars):
-        bar_time = base_time + timedelta(minutes=i * interval_minutes)
-
-        # Add significant trend and random movement
-        trend_component = trend_direction * trend_strength * (i / num_bars) * (daily_high - daily_low)
-        random_component = np.random.normal(0, (daily_high - daily_low) * 0.25)  # Much bigger random moves
-
-        # Calculate bar prices with substantial variation
-        bar_open = current_price
-        bar_close = bar_open + trend_component + random_component
-
-        # Create realistic high/low with significant variation
-        price_range = daily_high - daily_low
-        high_variation = abs(np.random.normal(0, price_range * 0.4))  # Much more variation
-        low_variation = abs(np.random.normal(0, price_range * 0.4))   # Much more variation
-
-        bar_high = max(bar_open, bar_close) + high_variation
-        bar_low = min(bar_open, bar_close) - low_variation
-
-        # Allow much more flexibility beyond daily bounds for realistic intraday swings
-        bar_high = min(bar_high, daily_high * 1.15)  # Allow 15% overshoot
-        bar_low = max(bar_low, daily_low * 0.85)    # Allow 15% undershoot
-        bar_close = np.clip(bar_close, bar_low, bar_high)
-
-        # Update current price with continuity but more variation
-        current_price = bar_close + np.random.normal(0, price_range * 0.1)  # More variation between bars
-
-        bar = {
-            'timestamp': bar_time,
-            'o': round(bar_open, 2),
-            'h': round(bar_high, 2),
-            'l': round(bar_low, 2),
-            'c': round(bar_close, 2),
-            'v': latest_day['v'] // num_bars
+        # Convert timeframe to appropriate limit
+        timeframe_limits = {
+            "1Min": 1440,  # 24 hours of 1-min bars
+            "5Min": 288,   # 24 hours of 5-min bars
+            "15Min": 96,   # 24 hours of 15-min bars
+            "30Min": 48,   # 24 hours of 30-min bars
+            "1H": 168,     # 7 days of hourly bars
+            "1D": 365      # 1 year of daily bars
         }
-        intraday_data.append(bar)
+        limit = timeframe_limits.get(timeframe, 288)
 
-    result_df = pd.DataFrame(intraday_data)
-    result_df['timestamp'] = pd.to_datetime(result_df['timestamp'])
-    result_df.set_index('timestamp', inplace=True)
+        data = trading_storage.get_market_data(symbol, start_date, limit)
 
-    return result_df
+        if data is not None and not data.empty:
+            print(f"      📚 Retrieved {len(data)} bars for {symbol} from database")
+            return data
+
+        print(f"      📭 No saved data found for {symbol} in database")
+        return pd.DataFrame()
+
+    except Exception as e:
+        print(f"      ❌ Error retrieving data from database: {e}")
+        return pd.DataFrame()
+
 
 def get_quotes(symbol):
     """Fetch latest quotes for a symbol."""

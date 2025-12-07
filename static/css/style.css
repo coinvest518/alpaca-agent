@@ -277,6 +277,16 @@ body {
     border-left-color: var(--text-muted);
 }
 
+.news-item.market-intelligence {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+    border-left-color: var(--accent-blue);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+.news-item.market-intelligence:hover {
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
 .news-title {
     font-weight: 700;
     margin-bottom: 0.5rem;

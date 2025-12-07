@@ -364,8 +364,9 @@ def get_portfolio():
 
 @app.route('/api/news')
 def get_news():
-    """Get latest news data"""
+    """Get latest news and market intelligence data"""
     try:
+        print(f"🤖 News API called, scraping_agent: {scraping_agent is not None}")
         if scraping_agent:
             # Import here to avoid startup issues
             from trading_agent.agents.data_ingestor import get_positions
@@ -373,60 +374,74 @@ def get_news():
             # Get news for current positions
             positions = get_positions()
             news_data = {}
+            market_intelligence = None
 
             if positions:
                 symbols = [pos.get('symbol') for pos in positions if pos.get('symbol')]
-                if symbols:
-                    # Get news for the first symbol (can be expanded)
-                    news_data = scraping_agent.scrape_news(symbols[0])
+                print(f"📊 Found positions: {symbols}")
 
-            if news_data:
+                # Get news for ALL symbols in positions, not just the first one
+                for symbol in symbols:
+                    try:
+                        print(f"📰 Scraping news for {symbol}...")
+                        symbol_news = scraping_agent.scrape_news(symbol)
+                        if symbol_news:
+                            news_data[symbol] = symbol_news
+                            print(f"✅ Got {len(symbol_news)} news items for {symbol}")
+                        else:
+                            print(f"⚠️ No news found for {symbol}")
+                    except Exception as e:
+                        print(f"❌ Error scraping news for {symbol}: {e}")
+                        # Continue with other symbols even if one fails
+
+            # Always get market intelligence
+            try:
+                print("🔍 Scraping market intelligence...")
+                market_intelligence = scraping_agent.scrape_market_data("https://finance.yahoo.com/")
+                print(f"✅ Market intelligence scraped: {market_intelligence is not None}")
+            except Exception as e:
+                print(f"❌ Market intelligence scraping failed: {e}")
+
+            if news_data or market_intelligence:
+                # Format data as expected by frontend: {symbol: [news_items]}
+                formatted_data = {}
+
+                # Add news for each symbol
+                for symbol, news_items in news_data.items():
+                    formatted_data[symbol] = news_items
+
+                # Add market intelligence as a special entry
+                if market_intelligence:
+                    print("📈 Adding market intelligence to response")
+                    formatted_data['MARKET_INTELLIGENCE'] = [{
+                        'title': f"Market Sentiment: {market_intelligence.get('sentiment', 'neutral').title()}",
+                        'summary': market_intelligence.get('market_summary', 'Market data unavailable'),
+                        'source': market_intelligence.get('source', 'Market Data'),
+                        'timestamp': market_intelligence.get('timestamp', datetime.now().isoformat()),
+                        'sentiment': market_intelligence.get('sentiment', 'neutral'),
+                        'url': 'https://finance.yahoo.com/'
+                    }]
+
+                print(f"📤 Returning data with keys: {list(formatted_data.keys())}")
                 return jsonify({
                     'status': 'success',
-                    'data': news_data,
+                    'data': formatted_data,
                     'timestamp': datetime.now().isoformat()
                 })
 
-        # Fallback mock news data
-        mock_news = [
-            {
-                'title': 'Market Update: Tech Stocks Show Resilience',
-                'summary': 'Major technology companies demonstrate strong performance despite market volatility.',
-                'sentiment': 'positive',
-                'timestamp': datetime.now().isoformat()
-            },
-            {
-                'title': 'Economic Indicators Point to Growth',
-                'summary': 'Latest economic data suggests continued expansion in key sectors.',
-                'sentiment': 'neutral',
-                'timestamp': datetime.now().isoformat()
-            },
-            {
-                'title': 'Energy Sector Faces Headwinds',
-                'summary': 'Oil and gas companies encounter challenges from regulatory changes.',
-                'sentiment': 'negative',
-                'timestamp': datetime.now().isoformat()
-            }
-        ]
-
+        # No fallback mock data - scraping agent handles fallbacks
+        print("⚠️ No scraping agent or no data")
         return jsonify({
             'status': 'success',
-            'data': mock_news,
+            'data': {},
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
-        # Ensure we always return valid data
-        mock_news = [
-            {
-                'title': 'Market Analysis in Progress',
-                'summary': 'AI trading system is analyzing market conditions and opportunities.',
-                'sentiment': 'neutral',
-                'timestamp': datetime.now().isoformat()
-            }
-        ]
+        print(f"❌ News API error: {e}")
+        # Return empty data instead of mock data
         return jsonify({
             'status': 'success',
-            'data': mock_news,
+            'data': {},
             'timestamp': datetime.now().isoformat()
         })
 

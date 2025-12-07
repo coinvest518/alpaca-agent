@@ -1095,18 +1095,28 @@ class TradingDashboard {
                     const summary = item.summary || 'No summary';
                     const sentiment = item.sentiment || 'neutral';
 
-                    html += `
-                        <div class="news-item ${sentiment}">
-                            <div class="news-title">${title}</div>
-                            <div class="news-summary">${summary.length > 100 ? summary.substring(0, 100) + '...' : summary}</div>
-                        </div>
-                    `;
+                    // Special styling for market intelligence
+                    if (symbol === 'MARKET_INTELLIGENCE') {
+                        html += `
+                            <div class="news-item market-intelligence ${sentiment}">
+                                <div class="news-title"><i class="fas fa-chart-line me-2"></i>${title}</div>
+                                <div class="news-summary">${summary.length > 150 ? summary.substring(0, 150) + '...' : summary}</div>
+                            </div>
+                        `;
+                    } else {
+                        html += `
+                            <div class="news-item ${sentiment}">
+                                <div class="news-title">${symbol}: ${title}</div>
+                                <div class="news-summary">${summary.length > 100 ? summary.substring(0, 100) + '...' : summary}</div>
+                            </div>
+                        `;
+                    }
                 });
             }
         });
 
         if (!html) {
-            html = '<div class="text-center text-muted">No news available</div>';
+            html = '<div class="text-center text-muted"><i class="fas fa-search fa-2x mb-3 opacity-50"></i><p>Scanning for market news...</p><small class="text-muted">Real-time news and analysis</small></div>';
         }
 
         container.innerHTML = html;

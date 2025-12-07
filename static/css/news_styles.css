@@ -1,0 +1,79 @@
+/* News Item Enhancements - Clickable Links */
+
+.news-item {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.news-item:hover {
+    text-decoration: none;
+}
+
+.news-meta {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.news-meta small {
+    opacity: 0.7;
+}
+
+.news-meta::after {
+    content: '→';
+    font-weight: bold;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.news-item:hover .news-meta::after {
+    opacity: 1;
+}
+
+/* Sentiment-based styling */
+.news-item.positive .news-title {
+    color: #00ff88;
+}
+
+.news-item.negative .news-title {
+    color: #ff4757;
+}
+
+.news-item.neutral .news-title {
+    color: #b8c5d6;
+}
+
+.news-item.market-intelligence .news-title {
+    color: #00d4ff;
+}
+
+/* Link hover effects */
+.news-item:hover .news-title {
+    text-decoration: underline;
+    text-decoration-color: currentColor;
+    text-underline-offset: 4px;
+}
+
+/* Ensure text is readable */
+.news-item.positive {
+    --text-primary: #ffffff;
+}
+
+.news-item.negative {
+    --text-primary: #ffffff;
+}
+
+.news-item.neutral {
+    --text-primary: #ffffff;
+}
+
+.news-item.market-intelligence {
+    --text-primary: #ffffff;
+}
