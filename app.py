@@ -290,4 +290,6 @@ if __name__ == '__main__':
         start_trading_background()
         print("✅ Trading system started automatically")
 
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Railway provides PORT environment variable
+    port = int(os.getenv('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
