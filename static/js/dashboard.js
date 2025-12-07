@@ -687,6 +687,7 @@ class TradingDashboard {
         this.marketChart.data.labels = labels;
         this.marketChart.data.datasets[0].data = prices;
         this.marketChart.data.datasets[1].data = emaData;
+        this.marketChart.update('active');
     }
 
     generateMockData() {
@@ -711,6 +712,7 @@ class TradingDashboard {
         this.marketChart.data.labels = labels;
         this.marketChart.data.datasets[0].data = prices;
         this.marketChart.data.datasets[1].data = emaData;
+        this.marketChart.update('active');
     }
 
     updateMarketStats(data) {

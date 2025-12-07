@@ -272,9 +272,10 @@ def get_historical_data(symbol):
 
         bars = get_bars(symbol, hours_back=hours_back, timeframe=timeframe)
 
+        # Always return success - even with empty data (subscription limitations)
+        historical_data = []
         if bars is not None and not bars.empty:
             # Convert to format suitable for Chart.js
-            historical_data = []
             for index, row in bars.iterrows():
                 historical_data.append({
                     'timestamp': index.isoformat() if hasattr(index, 'isoformat') else str(index),
@@ -285,35 +286,19 @@ def get_historical_data(symbol):
                     'volume': int(row['v'])
                 })
 
-            return jsonify({
-                'status': 'success',
-                'symbol': symbol,
-                'data': historical_data,
-                'timestamp': datetime.now().isoformat()
-            })
-        else:
-            return jsonify({
-                'status': 'error',
-                'message': f'No historical data available for {symbol}',
-                'data': [],
-                'timestamp': datetime.now().isoformat()
-            })
-
+        return jsonify({
+            'status': 'success',
+            'symbol': symbol,
+            'data': historical_data,  # Will be empty array if no data available
+            'timestamp': datetime.now().isoformat()
+        })
     except Exception as e:
-        print(f"Error getting historical data for {symbol}: {str(e)}")
+        print(f"Error in historical_data API: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e),
             'data': [],
             'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        # Return empty data on error instead of hardcoded mock data
-        return jsonify({
-            'status': 'error',
-            'data': {},
-            'timestamp': datetime.now().isoformat(),
-            'error': str(e)
         })
 
 @app.route('/api/portfolio')
