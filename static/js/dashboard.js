@@ -737,6 +737,41 @@ class TradingDashboard {
             document.getElementById('price-change').className = '';
             document.getElementById('volume').textContent = '--';
         }
+
+        // Update market status
+        this.updateMarketStatus();
+    }
+
+    updateMarketStatus() {
+        const now = new Date();
+        const estTime = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
+        const day = estTime.getDay(); // 0 = Sunday, 6 = Saturday
+        const hour = estTime.getHours();
+        const minute = estTime.getMinutes();
+        const currentTime = hour * 60 + minute;
+
+        // Market hours: 9:30 AM - 4:00 PM EST, Monday-Friday
+        const marketOpen = 9 * 60 + 30; // 9:30 AM
+        const marketClose = 16 * 60; // 4:00 PM
+        const isWeekday = day >= 1 && day <= 5;
+        const isMarketHours = isWeekday && currentTime >= marketOpen && currentTime < marketClose;
+
+        const statusElement = document.getElementById('market-status');
+        const badge = statusElement.querySelector('.badge');
+
+        if (isMarketHours) {
+            badge.textContent = 'OPEN';
+            badge.className = 'badge bg-success market-status-badge';
+        } else if (isWeekday && currentTime < marketOpen) {
+            badge.textContent = 'PRE-MARKET';
+            badge.className = 'badge bg-warning market-status-badge';
+        } else if (isWeekday && currentTime >= marketClose) {
+            badge.textContent = 'AFTER HOURS';
+            badge.className = 'badge bg-info market-status-badge';
+        } else {
+            badge.textContent = 'CLOSED';
+            badge.className = 'badge bg-secondary market-status-badge';
+        }
     }
 
     async calculate24hChange(symbol) {
