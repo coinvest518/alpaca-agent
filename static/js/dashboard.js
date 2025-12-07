@@ -20,6 +20,8 @@ class TradingDashboard {
         this.initPerformanceChart();
         this.updateStatus();
         this.updateLastUpdate();
+        // Load symbols immediately
+        this.loadSymbols();
     }
 
     initMarketChart() {
@@ -195,7 +197,28 @@ class TradingDashboard {
         // Symbol selection
         document.getElementById('chart-symbol').addEventListener('change', (e) => {
             this.currentSymbol = e.target.value;
-            this.updateMarketData();
+            // Reload symbols in case positions changed, then update data
+            this.loadSymbols().then(() => {
+                this.updateMarketData();
+            });
+        });
+
+        // Manual symbol input
+        document.getElementById('manual-symbol').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const symbol = e.target.value.trim();
+                if (symbol) {
+                    this.addManualSymbol(symbol);
+                }
+            }
+        });
+
+        document.getElementById('add-symbol-btn').addEventListener('click', () => {
+            const symbolInput = document.getElementById('manual-symbol');
+            const symbol = symbolInput.value.trim();
+            if (symbol) {
+                this.addManualSymbol(symbol);
+            }
         });
 
         // Timeframe buttons
@@ -343,7 +366,11 @@ class TradingDashboard {
 
     async updateMarketData() {
         try {
-            const response = await fetch('/api/market_data');
+            // First load symbols from positions
+            await this.loadSymbols();
+
+            // Then load market data for current symbol
+            const response = await fetch(`/api/market_data?symbol=${this.currentSymbol}`);
             const data = await response.json();
 
             if (data.status === 'success' && data.data) {
@@ -353,6 +380,97 @@ class TradingDashboard {
             }
         } catch (error) {
             console.error('Error updating market data:', error);
+        }
+    }
+
+    async loadSymbols() {
+        try {
+            const response = await fetch('/api/symbols');
+            const data = await response.json();
+
+            if (data.status === 'success' && data.symbols) {
+                // Get manually added symbols from localStorage
+                const manualSymbols = this.getManualSymbols();
+                
+                // Combine API symbols with manual symbols
+                const allSymbols = [...new Set([...data.symbols, ...manualSymbols])];
+                
+                this.updateSymbolDropdownFromSymbols(allSymbols, data.position_symbols || [], data.order_symbols || []);
+            }
+        } catch (error) {
+            console.error('Error loading symbols:', error);
+            // Fallback to empty symbols
+            this.updateSymbolDropdownFromSymbols([], [], []);
+        }
+    }
+
+    getManualSymbols() {
+        try {
+            const stored = localStorage.getItem('manualSymbols');
+            return stored ? JSON.parse(stored) : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
+    addManualSymbol(symbol) {
+        if (!symbol || symbol.trim() === '') return;
+        
+        symbol = symbol.toUpperCase().trim();
+        const manualSymbols = this.getManualSymbols();
+        
+        if (!manualSymbols.includes(symbol)) {
+            manualSymbols.push(symbol);
+            localStorage.setItem('manualSymbols', JSON.stringify(manualSymbols));
+            
+            // Reload symbols to update dropdown
+            this.loadSymbols().then(() => {
+                // Set the newly added symbol as selected
+                document.getElementById('chart-symbol').value = symbol;
+                this.currentSymbol = symbol;
+                this.updateMarketData();
+            });
+        }
+        
+        // Clear the input
+        document.getElementById('manual-symbol').value = '';
+    }
+
+    updateSymbolDropdownFromSymbols(symbols, positionSymbols = [], orderSymbols = []) {
+        const symbolSelect = document.getElementById('chart-symbol');
+
+        // Clear existing options
+        symbolSelect.innerHTML = '';
+
+        if (symbols.length > 0) {
+            // Add options for each symbol
+            symbols.forEach(symbol => {
+                const option = document.createElement('option');
+                option.value = symbol;
+                option.textContent = symbol;
+                
+                // Mark position symbols with a special indicator
+                if (positionSymbols.includes(symbol)) {
+                    option.textContent += ' 📊'; // Position indicator
+                } else if (orderSymbols.includes(symbol)) {
+                    option.textContent += ' 📋'; // Order indicator
+                }
+                
+                symbolSelect.appendChild(option);
+            });
+
+            // Set current symbol to first position symbol if available, otherwise first symbol
+            if (!symbols.includes(this.currentSymbol)) {
+                this.currentSymbol = positionSymbols.length > 0 ? positionSymbols[0] : symbols[0];
+            }
+            symbolSelect.value = this.currentSymbol;
+        } else {
+            // No symbols available
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'No symbols';
+            option.disabled = true;
+            symbolSelect.appendChild(option);
         }
     }
 
@@ -368,15 +486,148 @@ class TradingDashboard {
             const symbolData = data[symbol];
 
             if (symbolData && symbolData.price) {
-                // Generate realistic historical data based on current price
-                this.generateHistoricalData(symbolData.price);
+                // Fetch real historical data instead of generating mock data
+                this.loadHistoricalData(symbol);
             }
         } else {
-            // Generate mock data
-            this.generateMockData();
+            // No data available - show empty chart
+            this.marketChart.update('active');
         }
+    }
 
+    async loadHistoricalData(symbol) {
+        try {
+            // Determine appropriate timeframe and hours back based on selected timeframe
+            let timeframe, hoursBack;
+            switch (this.chartTimeframe) {
+                case '1H':
+                    timeframe = '5Min';
+                    hoursBack = 48; // Get 48 hours of data to ensure we have points (will show last ~14 hours)
+                    break;
+                case '4H':
+                    timeframe = '5Min';
+                    hoursBack = 96; // Get 96 hours of data for 4H view
+                    break;
+                case '1D':
+                    timeframe = '1H';
+                    hoursBack = 168; // Get 7 days of 1H bars for 1D view
+                    break;
+                case '1W':
+                    timeframe = '1H';
+                    hoursBack = 720; // Get 30 days of 1H bars for 1W view
+                    break;
+                default:
+                    timeframe = '5Min';
+                    hoursBack = 168; // Default to 7 days
+            }
+
+            console.log(`Fetching ${timeframe} data for ${hoursBack} hours for ${symbol}`);
+
+            const response = await fetch(`/api/historical_data/${symbol}?timeframe=${timeframe}&hours=${hoursBack}`);
+            const histData = await response.json();
+
+            if (histData.status === 'success' && histData.data && histData.data.length > 0) {
+                console.log(`Got ${histData.data.length} data points for ${symbol}`);
+                this.renderHistoricalChart(histData.data);
+            } else {
+                console.log(`No ${timeframe} data for ${hoursBack} hours, trying fallback...`);
+
+                // Try fallback timeframes based on the view
+                let fallbackSuccessful = false;
+
+                if (this.chartTimeframe === '1H' || this.chartTimeframe === '4H') {
+                    // For short timeframes, try 15Min data first, then 1H data
+                    const fallbackTimeframes = ['15Min', '1H'];
+
+                    for (const fallbackTimeframe of fallbackTimeframes) {
+                        console.log(`Trying fallback timeframe: ${fallbackTimeframe} for ${hoursBack} hours`);
+                        try {
+                            const fallbackResponse = await fetch(`/api/historical_data/${symbol}?timeframe=${fallbackTimeframe}&hours=${hoursBack}`);
+                            const fallbackData = await fallbackResponse.json();
+
+                            if (fallbackData.status === 'success' && fallbackData.data && fallbackData.data.length > 0) {
+                                console.log(`Using ${fallbackTimeframe} data: ${fallbackData.data.length} points`);
+                                this.renderHistoricalChart(fallbackData.data);
+                                fallbackSuccessful = true;
+                                break;
+                            }
+                        } catch (e) {
+                            console.log(`Failed to fetch ${fallbackTimeframe} data:`, e);
+                        }
+                    }
+                }
+
+                if (!fallbackSuccessful) {
+                    // Try with daily data for longer timeframes
+                    if (this.chartTimeframe === '1W') {
+                        const dailyResponse = await fetch(`/api/historical_data/${symbol}?timeframe=1D&hours=720`); // 30 days
+                        const dailyData = await dailyResponse.json();
+                        if (dailyData.status === 'success' && dailyData.data && dailyData.data.length > 0) {
+                            console.log(`Using daily data: ${dailyData.data.length} points`);
+                            this.renderHistoricalChart(dailyData.data);
+                            fallbackSuccessful = true;
+                        }
+                    }
+                }
+
+                if (!fallbackSuccessful) {
+                    console.log('All data fetching attempts failed, using fallback chart');
+                    this.generateFallbackChart(symbol);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading historical data:', error);
+            // Fallback to generated data
+            this.generateFallbackChart(symbol);
+        }
+    }
+
+    generateFallbackChart(symbol) {
+        const currentData = this.lastMarketData[symbol];
+        if (currentData && currentData.price) {
+            this.generateHistoricalData(currentData.price);
+        } else {
+            // No data available
+            this.marketChart.data.labels = [];
+            this.marketChart.data.datasets.forEach(dataset => {
+                dataset.data = [];
+            });
+            this.marketChart.update('active');
+        }
+    }
+
+    renderHistoricalChart(historicalData) {
+        const labels = [];
+        const prices = [];
+        const emaData = [];
+
+        historicalData.forEach(point => {
+            // Parse timestamp - handle different formats
+            let timestamp;
+            if (point.timestamp.includes('+')) {
+                timestamp = new Date(point.timestamp);
+            } else {
+                timestamp = new Date(point.timestamp + (point.timestamp.includes('Z') ? '' : 'Z'));
+            }
+            labels.push(timestamp);
+            prices.push(point.close);
+
+            // Calculate EMA
+            if (emaData.length === 0) {
+                emaData.push(point.close);
+            } else {
+                const multiplier = 2 / (20 + 1);
+                emaData.push((point.close * multiplier) + (emaData[emaData.length - 1] * (1 - multiplier)));
+            }
+        });
+
+        this.marketChart.data.labels = labels;
+        this.marketChart.data.datasets[0].data = prices;
+        this.marketChart.data.datasets[1].data = emaData;
         this.marketChart.update('active');
+
+        console.log(`Chart updated with ${historicalData.length} data points`);
+        console.log(`Price range: $${Math.min(...prices).toFixed(2)} - $${Math.max(...prices).toFixed(2)}`);
     }
 
     generateHistoricalData(currentPrice) {
@@ -476,13 +727,77 @@ class TradingDashboard {
                 document.getElementById('volume').textContent =
                     symbolData.volume ? symbolData.volume.toLocaleString() : '--';
 
-                // Mock price change (in real implementation, this would come from API)
-                const change = (Math.random() - 0.5) * 4;
-                const changePercent = (change / symbolData.price) * 100;
+                // Calculate real 24h change from historical data
+                this.calculate24hChange(symbol);
+            }
+        } else {
+            // No data available
+            document.getElementById('current-price').textContent = '$--.--';
+            document.getElementById('price-change').textContent = '+--.-- (--.--%)';
+            document.getElementById('price-change').className = '';
+            document.getElementById('volume').textContent = '--';
+        }
+    }
+
+    async calculate24hChange(symbol) {
+        try {
+            // Get 24 hours of 1H bars to calculate change
+            const response = await fetch(`/api/historical_data/${symbol}?timeframe=1H&hours=24`);
+            const histData = await response.json();
+
+            if (histData.status === 'success' && histData.data && histData.data.length >= 2) {
+                const currentPrice = histData.data[histData.data.length - 1].close;
+                const previousPrice = histData.data[0].close; // 24 hours ago
+                const change = currentPrice - previousPrice;
+                const changePercent = (change / previousPrice) * 100;
+
                 const changeElement = document.getElementById('price-change');
                 changeElement.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)`;
-                changeElement.className = change >= 0 ? 'text-success' : 'text-danger';
+                changeElement.className = change >= 0 ? 'price-positive' : 'price-negative';
+            } else {
+                // Fallback: use position data for change calculation
+                await this.calculateChangeFromPosition(symbol);
             }
+        } catch (error) {
+            console.error('Error calculating 24h change:', error);
+            // Fallback: use position data
+            await this.calculateChangeFromPosition(symbol);
+        }
+    }
+
+    async calculateChangeFromPosition(symbol) {
+        try {
+            // Get position data to calculate change
+            const response = await fetch('/api/portfolio');
+            const data = await response.json();
+
+            if (data.status === 'success' && data.data && data.data.positions) {
+                const position = data.data.positions.find(pos => pos.symbol === symbol);
+                if (position) {
+                    const currentPrice = parseFloat(position.current_price || 0);
+                    const entryPrice = parseFloat(position.avg_entry_price || 0);
+
+                    if (currentPrice > 0 && entryPrice > 0) {
+                        const change = currentPrice - entryPrice;
+                        const changePercent = (change / entryPrice) * 100;
+
+                        const changeElement = document.getElementById('price-change');
+                        changeElement.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)`;
+                        changeElement.className = change >= 0 ? 'price-positive' : 'price-negative';
+                        return;
+                    }
+                }
+            }
+
+            // If no position data, show neutral
+            const changeElement = document.getElementById('price-change');
+            changeElement.textContent = '-- (--)';
+            changeElement.className = '';
+        } catch (error) {
+            console.error('Error calculating change from position:', error);
+            const changeElement = document.getElementById('price-change');
+            changeElement.textContent = '-- (--)';
+            changeElement.className = '';
         }
     }
 
@@ -505,82 +820,115 @@ class TradingDashboard {
     }
 
     renderPortfolio(data) {
-        const container = document.getElementById('portfolio-data');
+        const summaryContainer = document.getElementById('portfolio-timestamp');
+        const totalValueEl = document.getElementById('total-market-value');
+        const totalPnLEl = document.getElementById('total-unrealized-pl');
+        const totalPnLPcEl = document.getElementById('total-unrealized-plpc');
+        const tableBody = document.getElementById('positions-table-body');
+        const noPositionsMsg = document.getElementById('no-positions-message');
 
         if (!data || (!data.positions && !data.account)) {
-            container.innerHTML = '<div class="text-center text-muted">No portfolio data available</div>';
+            tableBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No portfolio data available</td></tr>';
+            noPositionsMsg.classList.remove('d-none');
             return;
         }
 
-        let html = '';
-        let totalPositions = 0;
-        let totalValue = 0;
-
-        // Render account cash
-        if (data.account) {
-            const cash = parseFloat(data.account.cash || 0);
-            totalValue += cash;
-            html += `
-                <div class="portfolio-item">
-                    <div>
-                        <div class="portfolio-symbol">💰 Cash</div>
-                        <div class="portfolio-price">Available balance</div>
-                    </div>
-                    <div class="portfolio-value">
-                        <div class="portfolio-pnl text-info">$${cash.toFixed(2)}</div>
-                    </div>
-                </div>
-            `;
+        // Update timestamp
+        if (data.timestamp) {
+            const timestamp = new Date(data.timestamp);
+            summaryContainer.textContent = timestamp.toLocaleTimeString();
         }
 
-        // Render positions
-        if (data.positions && Array.isArray(data.positions)) {
+        // Update portfolio summary
+        if (data.summary) {
+            const totalValue = parseFloat(data.summary.total_market_value || 0);
+            const totalPnL = parseFloat(data.summary.total_unrealized_pl || 0);
+            const totalPnLPc = parseFloat(data.summary.total_unrealized_plpc || 0);
+
+            totalValueEl.textContent = `$${totalValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+            const pnlClass = totalPnL >= 0 ? 'text-success' : 'text-danger';
+            const pnlSign = totalPnL >= 0 ? '+' : '';
+            totalPnLEl.innerHTML = `<span class="${pnlClass}">${pnlSign}$${totalPnL.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`;
+            totalPnLPcEl.innerHTML = `<span class="${pnlClass}">(${pnlSign}${totalPnLPc.toFixed(2)}%)</span>`;
+        }
+
+        // Render positions table
+        let tableHtml = '';
+
+        if (data.positions && Array.isArray(data.positions) && data.positions.length > 0) {
             data.positions.forEach(position => {
-                const symbol = position.symbol || position.asset_id;
-                const shares = parseFloat(position.qty || 0);
-                const price = parseFloat(position.current_price || position.avg_entry_price || 0);
+                const symbol = position.symbol || position.asset_id || 'Unknown';
+                const qty = parseFloat(position.qty || 0);
+                const avgEntryPrice = parseFloat(position.avg_entry_price || 0);
+                const currentPrice = parseFloat(position.current_price || position.market_value / qty || avgEntryPrice);
                 const marketValue = parseFloat(position.market_value || 0);
                 const costBasis = parseFloat(position.cost_basis || 0);
-                const pnl = marketValue - costBasis;
-                const pnlPercent = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+                const unrealizedPl = parseFloat(position.unrealized_pl || 0);
+                const unrealizedPlPc = parseFloat(position.unrealized_plpc || 0);
 
-                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
-                const pnlIcon = pnl >= 0 ? '▲' : '▼';
-                totalValue += marketValue;
-                totalPositions++;
+                const side = position.side || 'long';
+                const sideIcon = side === 'long' ? '📈' : '📉';
+                const sideClass = side === 'long' ? 'text-success' : 'text-danger';
 
-                html += `
-                    <div class="portfolio-item">
-                        <div>
-                            <div class="portfolio-symbol">${symbol}</div>
-                            <div class="portfolio-price">${shares} shares @ $${price.toFixed(2)}</div>
-                        </div>
-                        <div class="portfolio-value">
-                            <div class="portfolio-pnl ${pnlClass}">
-                                ${pnlIcon} $${marketValue.toFixed(2)}
-                                <small>(${pnl >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)</small>
+                const pnlClass = unrealizedPl >= 0 ? 'text-success' : 'text-danger';
+                const pnlIcon = unrealizedPl >= 0 ? '▲' : '▼';
+                const pnlSign = unrealizedPl >= 0 ? '+' : '';
+
+                tableHtml += `
+                    <tr class="position-row">
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <span class="me-2">${sideIcon}</span>
+                                <div>
+                                    <div class="fw-bold">${symbol}</div>
+                                    <small class="text-muted text-capitalize">${side}</small>
+                                </div>
                             </div>
-                        </div>
-                    </div>
+                        </td>
+                        <td class="text-end">
+                            <span class="fw-semibold">${qty.toLocaleString('en-US', {maximumFractionDigits: 0})}</span>
+                        </td>
+                        <td class="text-end">
+                            <span>$${avgEntryPrice.toFixed(2)}</span>
+                        </td>
+                        <td class="text-end">
+                            <span>$${currentPrice.toFixed(2)}</span>
+                        </td>
+                        <td class="text-end">
+                            <span class="fw-semibold">$${marketValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                        </td>
+                        <td class="text-end">
+                            <div class="${pnlClass} fw-semibold">
+                                ${pnlIcon} $${unrealizedPl.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                <br><small>(${pnlSign}${unrealizedPlPc.toFixed(2)}%)</small>
+                            </div>
+                        </td>
+                    </tr>
                 `;
             });
+
+            noPositionsMsg.classList.add('d-none');
+        } else {
+            tableHtml = '<tr><td colspan="6" class="text-center py-4 text-muted">No open positions</td></tr>';
+            noPositionsMsg.classList.remove('d-none');
         }
 
-        if (!html) {
-            html = '<div class="text-center text-muted">No positions found</div>';
+        tableBody.innerHTML = tableHtml;
+
+        // Update global stats
+        const positionCount = data.summary ? data.summary.position_count || 0 : 0;
+        document.getElementById('active-positions').textContent = positionCount;
+
+        // Update total P&L in header stats
+        if (data.summary) {
+            const totalPnL = parseFloat(data.summary.total_unrealized_pl || 0);
+            const totalPnLPc = parseFloat(data.summary.total_unrealized_plpc || 0);
+
+            document.getElementById('total-pnl').textContent = `$${totalPnL.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            document.getElementById('pnl-change').textContent = `${totalPnL >= 0 ? '+' : ''}${totalPnLPc.toFixed(2)}%`;
+            document.getElementById('pnl-change').className = `badge ${totalPnL >= 0 ? 'bg-success' : 'bg-danger'}`;
         }
-
-        container.innerHTML = html;
-
-        // Update stats
-        document.getElementById('active-positions').textContent = totalPositions;
-
-        // Calculate total P&L (mock calculation for demo)
-        const totalPnl = totalValue - 10000; // Assuming $10k starting capital
-        const pnlPercent = (totalPnl / 10000) * 100;
-        document.getElementById('total-pnl').textContent = `$${totalPnl.toFixed(2)}`;
-        document.getElementById('pnl-change').textContent = `${totalPnl >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%`;
-        document.getElementById('pnl-change').className = `badge ${totalPnl >= 0 ? 'bg-success' : 'bg-danger'}`;
     }
 
     async updateTradingDecisions() {

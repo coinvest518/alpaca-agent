@@ -122,46 +122,67 @@ def get_trading_status():
 
 @app.route('/api/market_data')
 def get_market_data():
-    """Get current market data"""
+    """Get current market data for a specific symbol or all positions"""
     try:
         # Import here to avoid startup issues
-        from trading_agent.agents.data_ingestor import get_positions, get_bars
+        from trading_agent.agents.data_ingestor import get_positions, get_bars, get_orders
 
-        # Get positions to know which symbols to fetch data for
-        positions = get_positions()
+        # Check if a specific symbol is requested
+        symbol_param = request.args.get('symbol')
+        
+        if symbol_param:
+            # Fetch data for specific symbol
+            symbols_to_fetch = [symbol_param.upper()]
+        else:
+            # Get positions to know which symbols to fetch data for
+            positions = get_positions()
+            symbols_to_fetch = [pos.get('symbol') for pos in positions if pos.get('symbol')]
+
         market_data = {}
+        orders = get_orders()  # Get orders for fallback price data
+        order_dict = {order['symbol']: order for order in orders}
 
-        if positions:
-            for position in positions:
-                symbol = position.get('symbol')
-                if symbol:
-                    # Get recent bars for the symbol
-                    bars = get_bars(symbol, hours_back=1, timeframe="5Min")
-                    if bars is not None and not bars.empty:
-                        latest_bar = bars.iloc[-1]
-                        market_data[symbol] = {
-                            'price': float(latest_bar['close']),
-                            'volume': int(latest_bar['volume']),
-                            'timestamp': latest_bar.name.isoformat() if hasattr(latest_bar.name, 'isoformat') else str(latest_bar.name)
-                        }
-                    else:
-                        # Fallback: use current price from position data
-                        current_price = position.get('current_price')
-                        if current_price:
-                            market_data[symbol] = {
-                                'price': float(current_price),
-                                'volume': 1000,  # Mock volume
-                                'timestamp': datetime.now().isoformat()
-                            }
+        for symbol in symbols_to_fetch:
+            # Try 1H bars first (most reliable for volume data)
+            print(f"Getting 1H bars for {symbol}...")
+            bars = get_bars(symbol, hours_back=24, timeframe="1H")
+            print(f"1H bars result: {bars is not None}, empty: {bars.empty if bars is not None else 'N/A'}")
+            if bars is not None and not bars.empty:
+                latest_bar = bars.iloc[-1]
+                volume = int(latest_bar['v'])
+                current_price = float(latest_bar['c'])
+                print(f"Using 1H data: volume={volume}, price={current_price}")
+            else:
+                # Fallback - try to get price from different sources
+                current_price = None
+                volume = 1000  # Mock volume when no bars available
+                
+                # First, check if this is a position
+                positions = get_positions()
+                for pos in positions:
+                    if pos.get('symbol') == symbol:
+                        current_price = pos.get('current_price')
+                        break
+                
+                # If not a position, check if there's an open order with limit price
+                if current_price is None and symbol in order_dict:
+                    order = order_dict[symbol]
+                    if order.get('limit_price'):
+                        current_price = float(order['limit_price'])
+                        print(f"Using order limit price: {current_price}")
+                
+                print(f"Using fallback data: volume={volume}, price={current_price}")
 
-        # If no position data, provide mock data for demo
-        if not market_data:
-            mock_symbols = ['SPY', 'AAPL', 'GOOGL', 'MSFT', 'TSLA']
-            for symbol in mock_symbols:
+            if current_price is not None:
                 market_data[symbol] = {
-                    'price': 100 + (hash(symbol) % 200),  # Deterministic mock price
-                    'volume': 1000000 + (hash(symbol) % 5000000),
-                    'timestamp': datetime.now().isoformat()
+                    'price': float(current_price),
+                    'volume': volume,
+                    'timestamp': datetime.now().isoformat(),
+                    'open': float(current_price),
+                    'high': float(current_price),
+                    'low': float(current_price),
+                    'change_24h': None,  # Will be calculated by frontend
+                    'change_percent_24h': None
                 }
 
         return jsonify({
@@ -170,23 +191,107 @@ def get_market_data():
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
-        # Fallback mock data on any error
-        mock_data = {
-            'SPY': {'price': 450.25, 'volume': 2500000, 'timestamp': datetime.now().isoformat()},
-            'AAPL': {'price': 175.50, 'volume': 1800000, 'timestamp': datetime.now().isoformat()},
-            'GOOGL': {'price': 135.75, 'volume': 1200000, 'timestamp': datetime.now().isoformat()},
-            'MSFT': {'price': 380.90, 'volume': 2100000, 'timestamp': datetime.now().isoformat()},
-            'TSLA': {'price': 245.30, 'volume': 3500000, 'timestamp': datetime.now().isoformat()}
-        }
+        print(f"Error in market_data API: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'data': {},
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/api/symbols')
+def get_symbols():
+    """Get list of symbols from current positions and open orders"""
+    try:
+        from trading_agent.agents.data_ingestor import get_positions, get_orders
+
+        positions = get_positions()
+        position_symbols = [pos.get('symbol') for pos in positions if pos.get('symbol')]
+
+        # Get open orders
+        orders = get_orders()
+        order_symbols = [order.get('symbol') for order in orders if order.get('symbol') and order.get('status') in ['accepted', 'pending', 'new']]
+
+        # Combine position symbols with order symbols, removing duplicates
+        all_symbols = list(set(position_symbols + order_symbols))
+        
+        # Sort with position symbols first, then order symbols
+        all_symbols.sort(key=lambda x: (x not in position_symbols, x not in order_symbols, x))
+
         return jsonify({
             'status': 'success',
-            'data': mock_data,
+            'symbols': all_symbols,
+            'position_symbols': position_symbols,
+            'order_symbols': order_symbols,
             'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'symbols': [],  # No fallback symbols
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/api/historical_data/<symbol>')
+def get_historical_data(symbol):
+    """Get historical data for a specific symbol for charting"""
+    try:
+        from trading_agent.agents.data_ingestor import get_bars
+
+        # Determine timeframe and hours back based on query params
+        timeframe = request.args.get('timeframe', '5Min')
+        hours_back = int(request.args.get('hours', 24))  # Default 24 hours
+
+        bars = get_bars(symbol, hours_back=hours_back, timeframe=timeframe)
+
+        if bars is not None and not bars.empty:
+            # Convert to format suitable for Chart.js
+            historical_data = []
+            for index, row in bars.iterrows():
+                historical_data.append({
+                    'timestamp': index.isoformat() if hasattr(index, 'isoformat') else str(index),
+                    'open': float(row['o']),
+                    'high': float(row['h']),
+                    'low': float(row['l']),
+                    'close': float(row['c']),
+                    'volume': int(row['v'])
+                })
+
+            return jsonify({
+                'status': 'success',
+                'symbol': symbol,
+                'data': historical_data,
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'No historical data available for {symbol}',
+                'data': [],
+                'timestamp': datetime.now().isoformat()
+            })
+
+    except Exception as e:
+        print(f"Error getting historical data for {symbol}: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'data': [],
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        # Return empty data on error instead of hardcoded mock data
+        return jsonify({
+            'status': 'error',
+            'data': {},
+            'timestamp': datetime.now().isoformat(),
+            'error': str(e)
         })
 
 @app.route('/api/portfolio')
 def get_portfolio():
-    """Get portfolio data"""
+    """Get portfolio data with full position details"""
     try:
         # Import here to avoid startup issues
         from trading_agent.agents.data_ingestor import get_account, get_positions
@@ -194,17 +299,52 @@ def get_portfolio():
         account = get_account()
         positions = get_positions()
 
+        print(f"DEBUG: Got {len(positions) if positions else 0} positions")
+
+        # Calculate portfolio totals
+        total_market_value = 0
+        total_cost_basis = 0
+        total_unrealized_pl = 0
+
+        if positions:
+            for pos in positions:
+                try:
+                    market_value = float(pos.get('market_value', 0))
+                    cost_basis = float(pos.get('cost_basis', 0))
+                    unrealized_pl = float(pos.get('unrealized_pl', 0))
+
+                    print(f"DEBUG: Position {pos.get('symbol')}: mv={market_value}, cb={cost_basis}, pl={unrealized_pl}")
+
+                    total_market_value += market_value
+                    total_cost_basis += cost_basis
+                    total_unrealized_pl += unrealized_pl
+                except (ValueError, TypeError) as e:
+                    print(f"DEBUG: Error processing position: {e}")
+                    continue
+
+        print(f"DEBUG: Totals - mv={total_market_value}, cb={total_cost_basis}, pl={total_unrealized_pl}")
+
         portfolio_data = {
             'account': account,
-            'positions': positions or []
+            'positions': positions or [],
+            'summary': {
+                'total_market_value': round(total_market_value, 2),
+                'total_cost_basis': round(total_cost_basis, 2),
+                'total_unrealized_pl': round(total_unrealized_pl, 2),
+                'total_unrealized_plpc': round((total_unrealized_pl / total_cost_basis * 100) if total_cost_basis > 0 else 0, 2),
+                'position_count': len(positions) if positions else 0
+            },
+            'timestamp': datetime.now().isoformat()
         }
+
+        print(f"DEBUG: Portfolio data keys: {list(portfolio_data.keys())}")
 
         return jsonify({
             'status': 'success',
-            'data': portfolio_data,
-            'timestamp': datetime.now().isoformat()
+            'data': portfolio_data
         })
     except Exception as e:
+        print(f"ERROR in get_portfolio: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e)

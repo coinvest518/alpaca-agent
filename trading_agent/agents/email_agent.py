@@ -15,7 +15,9 @@ class EmailAgent:
         else:
             self.composio = None
             self.enabled = False
-            print("⚠️  Email agent disabled - COMPOSIO_API_KEY not found")
+            # Only show warning in debug mode
+            if os.getenv("DEBUG", "").lower() == "true":
+                print("⚠️  Email agent disabled - COMPOSIO_API_KEY not found")
 
     def send_trading_report(self, trading_data):
         """Send a comprehensive trading report email."""
